@@ -17,7 +17,7 @@ The project includes:
 - data cleaning and exploratory analysis;
 - multiple linear regression and model selection;
 - residual and influence diagnostics;
-- coefficient interpretation; and
+- coefficient interpretation;
 - test-set validation.
 
 The selected model uses log sale price as the response and includes above-ground living area, total basement area, house age, squared house age, overall quality, and fireplace category. It explains approximately 87.2% of the variation in log sale prices and achieved a test-set R-squared of approximately 0.81.
@@ -53,4 +53,3 @@ Alternatively, open the `.Rmd` file in RStudio and knit it to PDF. Rendering the
 - Yichen Wang
 - Lei Zhu
 - Zhaotong Pan
-
