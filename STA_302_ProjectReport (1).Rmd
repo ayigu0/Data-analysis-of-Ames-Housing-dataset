@@ -1,0 +1,2685 @@
+---
+title: "STA302 Final Project Report"
+output:
+  pdf_document:
+    toc: false
+    number_sections: false
+    fig_caption: true
+indent: true
+fontsize: 12pt
+header-includes:
+  - \usepackage{indentfirst}
+  - \setlength{\parindent}{2em}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  out.width = "95%"
+)
+
+library(tidyverse)
+library(AmesHousing)
+library(broom)
+library(knitr)
+library(patchwork)
+library(gridExtra)
+library(grid)
+library(car)
+```
+
+# Introduction
+
+Housing prices are important to the economy because they can stimulate overall consumption. Case, Quigley, and Shiller (2005) find strong evidence that housing price changes have important effects on consumption. For example, when house prices increase, homeowners may feel wealthier and have more confidence on spending, while decreasing in house price would reduce their confidence and decrease consumption. Based on this, our research question is: To what extent do above-ground living areas, total basement areas, overall quality, number of fireplaces and full bathrooms explain variations in house selling price under normal sale circumstances?
+
+We used MLR to study how those housing characteristics in the research question are associated with the response variable, log of housing price. To answer our research question, we rely on two housing price studies.
+
+Cebula (2009) applied a hedonic pricing model to the housing market in Savannah, Georgia. This paper studies how structural characteristics and amenity factors affect housing prices. It finds some positively associated factors including number of bathrooms, number of fireplaces, square feet of  living space. This article is related to our research question because it shows the housing price can be studied through a regression analysis, its findings support our choice of predictors such as living area, number of fireplaces, and other housing features.
+
+Zietz, Zietz, and Sirmans (2008) studies factors affecting housing prices and whether those factors are consistent for cheaper and expensive houses. Instead of only using OLS regression, they use quantile regression to compare effects across different levels of the price distribution. They find out that purchasers of expensive houses value characteristics such as square footage, number of bathrooms and house age differently from buyers of cheaper houses. Although our regression method is different, the results still demonstrate that house age and number of bathrooms are meaningful predictors associated with housing prices.
+
+Therefore, these two articles support our choice of predictors and modeling. MLR is suitable because our response variable is quantitative, and our goal is to study the conditional effects of housing characteristics on selling price.Thus, our model focuses on interpretation rather than prediction.
+
+# Data description
+
+```{r include=FALSE}
+# load data
+ames <- make_ames()
+dim(ames)
+head(ames)
+write.csv(ames, "ames.csv", row.names = FALSE)
+
+# clean data
+clean_ames<- ames %>%
+  # create house age
+  mutate(
+    House_Age = (Year_Sold - Year_Built) + Mo_Sold/12
+  ) %>%
+  
+  # Convert fireplaces into categorical variable
+   mutate(
+  Fireplace_Category = case_when(
+    Fireplaces == 0 ~ "0 fireplaces",
+    Fireplaces == 1 ~ "1 fireplace",
+    Fireplaces >= 2 ~ "2 or more fireplaces"
+  ),
+  
+  Overall_Qual_Category = case_when(
+    Overall_Qual %in% c("Very_Poor", "Poor", "Fair", "Below_Average") ~ "Bad",
+    Overall_Qual %in% c("Average", "Above_Average") ~ "Average",
+    Overall_Qual %in% c("Good", "Very_Good", "Excellent", "Very_Excellent") ~ "Good"
+  )
+)%>%
+   # convert to factor
+  mutate(
+    Fireplace_Category = factor(
+      Fireplace_Category,
+      levels = c("0 fireplaces", "1 fireplace", "2 or more fireplaces")
+    ),
+    
+    Overall_Qual_Category = factor(
+      Overall_Qual_Category,
+      levels = c("Bad", "Average", "Good")
+    )
+  ) %>%
+  # select variables
+  dplyr::select(
+    Sale_Price,
+    Gr_Liv_Area,
+    Total_Bsmt_SF,
+    House_Age,
+    Overall_Qual_Category,
+    Fireplace_Category,
+    Full_Bath,
+  ) %>%
+  na.omit() %>%
+  filter(
+    Sale_Price > 0,
+    Gr_Liv_Area >= 0,
+    Total_Bsmt_SF >=0,
+    House_Age >= 0,
+    Full_Bath >= 0
+  ) %>% mutate(
+    log_sale_price = log(Sale_Price)
+  )
+
+
+write.csv(clean_ames, "clean_ames.csv", row.names = FALSE)
+```
+
+The dataset we use was accessed through the AmesHousing R package and contains 82 variables for 2,930 properties in Ames, Iowa. In this project, the dataset is used to examine how selected housing characteristics are related to SalePrice. The original data was collected by the Ames City Assessor’s Office in Iowa. De Cock (2011) explains that the data came from the assessor's office records system and included residential property sales in Ames, Iowa, from 2006 to 2010. \vspace{1em}
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=7.5}
+
+
+sale_price_summary <- tibble(
+  Statistic = c(
+    "Minimum", "First quartile", "Median", "Mean",
+    "Third quartile", "Maximum", "Standard deviation",
+    "Interquartile range"
+  ),
+  Value = c(
+    min(clean_ames$Sale_Price, na.rm = TRUE),
+    quantile(clean_ames$Sale_Price, 0.25, na.rm = TRUE),
+    median(clean_ames$Sale_Price, na.rm = TRUE),
+    mean(clean_ames$Sale_Price, na.rm = TRUE),
+    quantile(clean_ames$Sale_Price, 0.75, na.rm = TRUE),
+    max(clean_ames$Sale_Price, na.rm = TRUE),
+    sd(clean_ames$Sale_Price, na.rm = TRUE),
+    IQR(clean_ames$Sale_Price, na.rm = TRUE)
+  )
+) %>%
+  mutate(Value = scales::dollar(round(Value, 0)))
+
+log_sale_price_summary <- tibble(
+  Statistic = c(
+    "Minimum", "First quartile", "Median", "Mean",
+    "Third quartile", "Maximum", "Standard deviation",
+    "Interquartile range"
+  ),
+  Value = c(
+    min(clean_ames$log_sale_price, na.rm = TRUE),
+    quantile(clean_ames$log_sale_price, 0.25, na.rm = TRUE),
+    median(clean_ames$log_sale_price, na.rm = TRUE),
+    mean(clean_ames$log_sale_price, na.rm = TRUE),
+    quantile(clean_ames$log_sale_price, 0.75, na.rm = TRUE),
+    max(clean_ames$log_sale_price, na.rm = TRUE),
+    sd(clean_ames$log_sale_price, na.rm = TRUE),
+    IQR(clean_ames$log_sale_price, na.rm = TRUE)
+  )
+) %>%
+  mutate(Value = round(Value, 3))
+
+table_theme <- ttheme_default(
+  core = list(
+    fg_params = list(fontsize = 15),
+    bg_params = list(
+      fill = c("#F7F9FC", "white"),
+      col = "#C7CED8",
+      lwd = 0.8
+    )
+  ),
+  colhead = list(
+    fg_params = list(
+      fontsize = 13,
+      fontface = "bold",
+      col = "white"
+    ),
+    bg_params = list(
+      fill = "#3F5F8A",
+      col = "#3F5F8A",
+      lwd = 0.8
+    )
+  )
+)
+
+sale_price_table_body <- tableGrob(
+  sale_price_summary,
+  rows = NULL,
+  theme = table_theme
+)
+
+log_sale_price_table_body <- tableGrob(
+  log_sale_price_summary,
+  rows = NULL,
+  theme = table_theme
+)
+
+# Helper function: keeps title above the table properly
+make_titled_table <- function(table_body, title_text) {
+  title_grob <- textGrob(
+    title_text,
+    gp = gpar(fontface = "bold", fontsize = 13)
+  )
+  
+  arrangeGrob(
+    title_grob,
+    table_body,
+    ncol = 1,
+    heights = unit.c(
+      unit(0.35, "in"),
+      sum(table_body$heights)
+    )
+  )
+}
+
+sale_price_table <- make_titled_table(
+  sale_price_table_body,
+  "Table 1.1. Summary Statistics for Sale Price"
+)
+
+log_sale_price_table <- make_titled_table(
+  log_sale_price_table_body,
+  "Table 1.2. Summary Statistics for Log Sale Price"
+)
+
+sale_price_histogram <- ggplot(clean_ames, aes(x = Sale_Price)) +
+  geom_histogram(
+    bins = 30,
+    fill = "cornflowerblue",
+    color = "white",
+    linewidth = 0.2
+  ) +
+  scale_x_continuous(labels = scales::dollar_format()) +
+  labs(
+    x = "Sale Price",
+    y = "Number of Properties",
+    caption = "Figure 1.1 Distribution of Sale Price"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    plot.subtitle = element_text(color = "gray35"),
+    plot.caption = element_text(
+      hjust = 0.5,
+      face = "bold",
+      size = 13,
+      margin = margin(t = 10)
+    ),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(t = 28, r = 5, b = 20, l = 5)
+  )
+
+log_sale_price_histogram <- ggplot(clean_ames, aes(x = log_sale_price)) +
+  geom_histogram(
+    bins = 30,
+    fill = "darksalmon",
+    color = "white",
+    linewidth = 0.2
+  ) +
+  labs(
+    x = "Log Sale Price",
+    y = "Number of Properties",
+    caption = "Figure 1.2 Distribution of Log Sale Price",
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    plot.subtitle = element_text(color = "gray35"),
+    plot.caption = element_text(
+      hjust = 0.5,
+      face = "bold",
+      size = 13,
+      margin = margin(t = 10)
+    ),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(t = 28, r = 5, b = 20, l = 5)
+  )
+
+sale_price_column <- wrap_elements(sale_price_table) / sale_price_histogram +
+  plot_layout(heights = c(2.2, 2.6))
+
+log_sale_price_column <- wrap_elements(log_sale_price_table) / log_sale_price_histogram +
+  plot_layout(heights = c(2.2, 2.6))
+
+sale_price_column | log_sale_price_column
+
+```
+
+The response variable is Sale Price, which measures the selling price of each house. From figure 1.1, the original Sale Price distribution is right-skewed, meaning most houses are sold at lower or middle price. From Figure 1.2, we can tell that after applying the log transformation on sale price, the distribution becomes closer to symmetric, making it more suitable for linear regression analysis.
+
+House age was created by subtracting Year Built from Year Sold, and we convert number of fireplaces into a categorical variable. We also regroup overall quality into three different levels. Then, we clean the data by dropping off all the abnormal values including 0 sale price and 0 living area.
+
+By Figure 1.3 and Table 1.3, both above-ground living area and total basement area are right-skewed. Total basement area has minimum 0, meaning some houses have no basement. House age ranges from 0 to 136 years, houses with age 0 years would mean a brand new house in this context. Table 1.4 shows most houses are Average or Good quality,and nearly half of them have no fireplaces. Both papers support that house prices are related to selected characteristics. Zietz, Zietz, and Sirmans (2008) emphasize that these property features affect buyers’ valuation of a house. Cebula (2009) finds that several housing features are positively associated with real sales price.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=6.8, out.width="100%"}
+hist_theme <- theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 11),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(8, 8, 8, 8)
+  )
+
+p1 <- ggplot(clean_ames, aes(x = Gr_Liv_Area)) +
+  geom_histogram(
+    bins = 30,
+    fill = "cornflowerblue",
+    color = "white",
+    linewidth = 0.2
+  ) +
+  labs(
+    title = "Above-ground Living Area",
+    x = "Above-ground living area",
+    y = "Count"
+  ) +
+  hist_theme
+
+p2 <- ggplot(clean_ames, aes(x = Total_Bsmt_SF)) +
+  geom_histogram(
+    bins = 30,
+    fill = "darkseagreen3",
+    color = "white",
+    linewidth = 0.2
+  ) +
+  labs(
+    title = "Total Basement Area",
+    x = "Total basement area",
+    y = "Count"
+  ) +
+  hist_theme
+
+p3 <- ggplot(clean_ames, aes(x = House_Age)) +
+  geom_histogram(
+    bins = 30,
+    fill = "darksalmon",
+    color = "white",
+    linewidth = 0.2
+  ) +
+  labs(
+    title = "House Age",
+    x = "House age",
+    y = "Count"
+  ) +
+  hist_theme
+
+p4 <- ggplot(clean_ames, aes(x = Full_Bath)) +
+  geom_histogram(
+    binwidth = 1,
+    boundary = -0.5,
+    fill = "plum3",
+    color = "white",
+    linewidth = 0.2
+  ) +
+  scale_x_continuous(breaks = 0:4) +
+  labs(
+    title = "Full Bathrooms",
+    x = "Number of full bathrooms",
+    y = "Count"
+  ) +
+  hist_theme
+
+histogram_plots <- arrangeGrob(
+  p1, p2,
+  p3, p4,
+  ncol = 2
+)
+
+hist_caption <- textGrob(
+  "Figure 1.3 Histograms of Numerical Predictors",
+  x = 0.5,
+  hjust = 0.5,
+  gp = gpar(fontface = "bold", fontsize = 13)
+)
+
+grid.arrange(
+  histogram_plots,
+  hist_caption,
+  ncol = 1,
+  heights = c(1, 0.05)
+)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE,fig.height = 3.95}
+# Numerical predictor summary table
+numeric_predictor_summary <- tibble(
+  Variable = c(
+    "Above-ground living area",
+    "Total basement area",
+    "House age",
+    "Full bathrooms"
+  ),
+  Mean = c(
+    mean(clean_ames$Gr_Liv_Area, na.rm = TRUE),
+    mean(clean_ames$Total_Bsmt_SF, na.rm = TRUE),
+    mean(clean_ames$House_Age, na.rm = TRUE),
+    mean(clean_ames$Full_Bath, na.rm = TRUE)
+  ),
+  Median = c(
+    median(clean_ames$Gr_Liv_Area, na.rm = TRUE),
+    median(clean_ames$Total_Bsmt_SF, na.rm = TRUE),
+    median(clean_ames$House_Age, na.rm = TRUE),
+    median(clean_ames$Full_Bath, na.rm = TRUE)
+  ),
+  SD = c(
+    sd(clean_ames$Gr_Liv_Area, na.rm = TRUE),
+    sd(clean_ames$Total_Bsmt_SF, na.rm = TRUE),
+    sd(clean_ames$House_Age, na.rm = TRUE),
+    sd(clean_ames$Full_Bath, na.rm = TRUE)
+  ),
+  Minimum = c(
+    min(clean_ames$Gr_Liv_Area, na.rm = TRUE),
+    min(clean_ames$Total_Bsmt_SF, na.rm = TRUE),
+    min(clean_ames$House_Age, na.rm = TRUE),
+    min(clean_ames$Full_Bath, na.rm = TRUE)
+  ),
+  Maximum = c(
+    max(clean_ames$Gr_Liv_Area, na.rm = TRUE),
+    max(clean_ames$Total_Bsmt_SF, na.rm = TRUE),
+    max(clean_ames$House_Age, na.rm = TRUE),
+    max(clean_ames$Full_Bath, na.rm = TRUE)
+  )
+) %>%
+  mutate(
+    Mean = round(Mean, 2),
+    Median = round(Median, 2),
+    SD = round(SD, 2),
+    Minimum = round(Minimum, 2),
+    Maximum = round(Maximum, 2)
+  )
+
+# Categorical predictor summary table
+categorical_predictor_summary <- bind_rows(
+  clean_ames %>%
+    count(Overall_Qual_Category) %>%
+    mutate(
+      Variable = "Overall quality",
+      Category = as.character(Overall_Qual_Category),
+      Percent = paste0(round(n / sum(n) * 100, 1), "%")
+    ) %>%
+    dplyr::select(Variable, Category, Count = n, Percent),
+
+  clean_ames %>%
+    count(Fireplace_Category) %>%
+    mutate(
+      Variable = "Fireplace",
+      Category = as.character(Fireplace_Category),
+      Percent = paste0(round(n / sum(n) * 100, 1), "%")
+    ) %>%
+    dplyr::select(Variable, Category, Count = n, Percent)
+)
+
+# Shared table style
+predictor_table_theme <- ttheme_default(
+  core = list(
+    fg_params = list(fontsize = 10),
+    bg_params = list(
+      fill = c("#F7F9FC", "white"),
+      col = "#C7CED8",
+      lwd = 0.8
+    ),
+    padding = unit(c(4, 4), "mm")
+  ),
+  colhead = list(
+    fg_params = list(
+      fontsize = 10,
+      fontface = "bold",
+      col = "white"
+    ),
+    bg_params = list(
+      fill = "#3F5F8A",
+      col = "#3F5F8A",
+      lwd = 0.8
+    ),
+    padding = unit(c(4, 4), "mm")
+  )
+)
+
+numeric_predictor_table <- tableGrob(
+  numeric_predictor_summary,
+  rows = NULL,
+  theme = predictor_table_theme
+)
+
+categorical_predictor_table <- tableGrob(
+  categorical_predictor_summary,
+  rows = NULL,
+  theme = predictor_table_theme
+)
+
+numeric_predictor_table$widths <- unit(
+  c(2.7, 1, 1, 1, 1, 1),
+  "null"
+)
+
+categorical_predictor_table$widths <- unit(
+  c(2, 2.4, 1, 1),
+  "null"
+)
+
+numeric_title <- textGrob(
+  "Table 1.3 Summary Statistics for Numerical Predictors",
+  x = 0.5,
+  hjust = 0.5,
+  gp = gpar(fontface = "bold", fontsize = 10)
+)
+
+categorical_title <- textGrob(
+  "Table 1.4 Summary Statistics for Categorical Predictors",
+  x = 0.5,
+  hjust = 0.5,
+  gp = gpar(fontface = "bold", fontsize = 10)
+)
+
+numeric_block <- arrangeGrob(
+  numeric_title,
+  numeric_predictor_table,
+  heights = unit.c(unit(0.4, "in"), unit(1, "null"))
+)
+
+categorical_block <- arrangeGrob(
+  categorical_title,
+  categorical_predictor_table,
+  heights = unit.c(unit(0.4, "in"), unit(1, "null"))
+)
+
+grid.arrange(
+  numeric_block,
+  categorical_block,
+  ncol = 1,
+  heights = c(1, 1.15),
+  padding = unit(0.05, "in")
+)
+```
+
+# Preliminary Results
+
+## Linear Regression Model
+
+\vspace{1em}
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Fit linear regression model
+model_pre <- lm(
+  log_sale_price ~
+    Gr_Liv_Area +
+    Total_Bsmt_SF +
+    House_Age +
+    Overall_Qual_Category +
+    Fireplace_Category +
+    Full_Bath,
+  data = clean_ames
+)
+
+# Create regression coefficient table
+coef_table <- broom::tidy(model_pre) %>%
+  mutate(
+    Term = case_when(
+      term == "(Intercept)" ~ "Intercept",
+      term == "Gr_Liv_Area" ~ "Above-ground living area",
+      term == "Total_Bsmt_SF" ~ "Total basement area",
+      term == "House_Age" ~ "House age",
+      term == "Overall_Qual_CategoryAverage" ~ "Quality: Average vs Bad",
+      term == "Overall_Qual_CategoryGood" ~ "Quality: Good vs Bad",
+      term == "Fireplace_Category1 fireplace" ~ "Fireplace: 1 vs 0",
+      term == "Fireplace_Category2 or more fireplaces" ~ "Fireplace: 2+ vs 0",
+      term == "Full_Bath" ~ "Full bathrooms",
+      TRUE ~ term
+    ),
+    Estimate = round(estimate, 6),
+    `Std. Error` = round(std.error, 6),
+    `t value` = round(statistic, 3),
+    `p value` = ifelse(p.value < 0.001, "<0.001", as.character(round(p.value, 3)))
+  ) %>%
+  dplyr::select(Term, Estimate, `Std. Error`, `t value`, `p value`)
+
+# Same style as previous tables
+regression_table_theme <- ttheme_default(
+  core = list(
+    fg_params = list(fontsize = 12),
+    bg_params = list(
+      fill = c("#F7F9FC", "white"),
+      col = "#C7CED8",
+      lwd = 0.8
+    ),
+    padding = unit(c(4, 4), "mm")
+  ),
+  colhead = list(
+    fg_params = list(
+      fontsize = 12,
+      fontface = "bold",
+      col = "white"
+    ),
+    bg_params = list(
+      fill = "#3F5F8A",
+      col = "#3F5F8A",
+      lwd = 0.8
+    ),
+    padding = unit(c(4, 4), "mm")
+  )
+)
+
+regression_table_body <- tableGrob(
+  coef_table,
+  rows = NULL,
+  theme = regression_table_theme
+)
+
+# Adjust column widths
+regression_table_body$widths <- unit(
+  c(3.2, 1.2, 1.2, 1.1, 1.1),
+  "null"
+)
+
+# Add title above table
+regression_title <- textGrob(
+  "Table 1.5 Linear Regression Coefficients",
+  gp = gpar(fontface = "bold", fontsize = 10)
+)
+
+regression_table <- arrangeGrob(
+  regression_title,
+  regression_table_body,
+  ncol = 1,
+  heights = unit.c(
+    unit(0.4, "in"),
+    sum(regression_table_body$heights)
+  )
+)
+
+grid.arrange(regression_table)
+```
+
+\vspace{1em}
+
+Table 1.5 suggests that several continuous predictors are strongly associated with housing price. For instance, above-ground living area has a positive coefficient estimate of 0.000299. This indicates that, holding all other predictors constant, a one unit increase in above-ground living area is associated with an average increase of 0.000299 in log-transformed response.
+
+The categorical predictors also show meaningful associations with housing price. For example, the coefficient estimate for category good overall quality is 0.355900, indicating that, holding all other predictors constant, houses classified as having good overall quality are associated with an average increase of 0.355900 in log-transformed housing sale price relative to houses with bad overall quality.
+
+In summary, predictors related to house size and quality appear to have strong associations with housing prices, providing evidence that structural housing characteristics are important factors in explaining variations in house selling prices.
+
+Both literature suggests that housing characteristics such as size, quality, fireplaces, and bathrooms significantly explain variations in house prices, which is consistent with the results from our analysis.
+
+## Residual Analysis
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Residual diagnostic plots
+old_par <- par(no.readonly = TRUE)
+
+par(
+  mfrow = c(2, 2),
+  pin = c(2.8, 2.8),
+  mar = c(4, 4, 3, 1),
+  oma = c(4, 0, 0, 0)   # extra outside space at bottom for whole figure caption
+)
+
+# Residuals vs fitted
+plot(
+  model_pre,
+  which = 1,
+  id.n = 0,
+  cex = 0.7,
+  cex.lab = 1.1,
+  cex.axis = 1.0,
+  cex.main = 1.2
+)
+
+# QQ plot
+plot(
+  model_pre,
+  which = 2,
+  id.n = 0,
+  cex = 0.7,
+  cex.lab = 1.1,
+  cex.axis = 1.0,
+  cex.main = 1.2
+)
+
+# Standardized residuals vs fitted
+fitted_values <- fitted(model_pre)
+std_residuals <- rstandard(model_pre)
+
+plot(
+  fitted_values,
+  std_residuals,
+  main = "Fitted vs Standardized Residuals",
+  xlab = "Fitted Values",
+  ylab = "Standardized Residuals",
+  pch = 16,
+  col = "black"
+)
+
+abline(h = 0, col = "red")
+
+# Histogram of standardized residuals
+hist(
+  std_residuals,
+  breaks = 30,
+  main = "Histogram of Standardized Residuals",
+  xlab = "Standardized Residuals",
+  col = "lightgray",
+  xlim = c(-4, 4)
+)
+
+# Whole figure caption
+mtext(
+  "Figure 1.3 Residual diagnostic plots ",
+  side = 1,
+  outer = TRUE,
+  line = 1.5,
+  font = 0.8,
+  cex = 1
+)
+
+par(old_par)
+```
+
+The residuals versus fitted plot was used to assess the linearity assumption. The residuals are generally centered around zero with no severe systematic pattern, suggesting that the linearity assumption is reasonably satisfied.
+
+The residuals versus fitted plot and the standardized residuals versus fitted plot were used to assess the constant variance assumption. The standardized residuals are mostly randomly scattered around zero, and the spread of residuals remains relatively stable across most fitted values. Additionally, no obvious pattern is observed, suggesting that the constant variance assumption is reasonably satisfied.
+
+The Q-Q plot and histogram of standardized residuals were used to assess the normality assumption. The histogram is approximately bell-shaped and centered around zero. The Q-Q plot is almost a straight but with substantial tail deviations and extreme standardized residuals. Therefore, the normality assumption is not reasonably satisfied
+
+```{r}
+# function for presenting a table contains the regression coefs
+make_regression_table <- function(model, title_text = "Linear Regression Coefficients") {
+  
+  coef_table <- broom::tidy(model) %>%
+    mutate(
+      Term = case_when(
+        term == "(Intercept)" ~ "Intercept",
+        term == "Gr_Liv_Area" ~ "Above-ground living area",
+        term == "Total_Bsmt_SF" ~ "Total basement area",
+        term == "House_Age" ~ "House age",
+        term == "I(House_Age^2)" ~ "House age squared",
+        term == "Overall_Qual_CategoryAverage" ~ "Quality: Average vs Bad",
+        term == "Overall_Qual_CategoryGood" ~ "Quality: Good vs Bad",
+        term == "Fireplace_Category1 fireplace" ~ "Fireplace: 1 vs 0",
+        term == "Fireplace_Category2 or more fireplaces" ~ "Fireplace: 2+ vs 0",
+        term == "Full_Bath" ~ "Full bathrooms",
+        term == "Gr_Liv_Area:Overall_Qual_CategoryAverage" ~
+          "Living area x Quality: Average",
+        term == "Gr_Liv_Area:Overall_Qual_CategoryGood" ~
+          "Living area x Quality: Good",
+        TRUE ~ term
+      ),
+      Estimate = round(estimate, 6),
+      `Std. Error` = round(std.error, 6),
+      `t value` = round(statistic, 3),
+      `p value` = ifelse(p.value < 0.001, "<0.001", as.character(round(p.value, 3)))
+    ) %>%
+    dplyr::select(Term, Estimate, `Std. Error`, `t value`, `p value`)
+  
+  regression_table_theme <- ttheme_default(
+    core = list(
+      fg_params = list(fontsize = 12),
+      bg_params = list(
+        fill = c("#F7F9FC", "white"),
+        col = "#C7CED8",
+        lwd = 0.8
+      ),
+      padding = unit(c(4, 4), "mm")
+    ),
+    colhead = list(
+      fg_params = list(
+        fontsize = 12,
+        fontface = "bold",
+        col = "white"
+      ),
+      bg_params = list(
+        fill = "#3F5F8A",
+        col = "#3F5F8A",
+        lwd = 0.8
+      ),
+      padding = unit(c(4, 4), "mm")
+    )
+  )
+  
+  regression_table_body <- tableGrob(
+    coef_table,
+    rows = NULL,
+    theme = regression_table_theme
+  )
+  
+  regression_table_body$widths <- unit(
+    c(3.4, 1.2, 1.2, 1.1, 1.1),
+    "null"
+  )
+  
+  regression_title <- textGrob(
+    title_text,
+    gp = gpar(fontface = "bold", fontsize = 10)
+  )
+  
+  regression_table <- arrangeGrob(
+    regression_title,
+    regression_table_body,
+    ncol = 1,
+    heights = unit.c(
+      unit(0.4, "in"),
+      sum(regression_table_body$heights)
+    )
+  )
+  
+  grid.arrange(regression_table)
+}
+```
+
+```{r}
+# make a comparison table for all models in the list
+make_model_comparison_table <- function(..., model_names = NULL,
+                                        title_text = "Model Comparison") {
+  
+  models <- list(...)
+  
+  if (is.null(model_names)) {
+    model_names <- paste0("Model ", seq_along(models))
+  }
+  
+  get_aicc <- function(model) {
+    n <- nobs(model)
+    k <- length(coef(model)) + 1  # coefficients + sigma
+    
+    AIC(model) + (2 * k * (k + 1)) / (n - k - 1)
+  }
+  
+  comparison_table <- tibble(
+    Model = model_names,
+    `Adjusted R-squared` = sapply(models, function(m) summary(m)$adj.r.squared),
+    AIC = sapply(models, AIC),
+    BIC = sapply(models, BIC),
+    AICc = sapply(models, get_aicc),
+    all_significant = c("yes","yes","yes","yes","no","no")
+  ) %>%
+    mutate(
+      `Adjusted R-squared` = round(`Adjusted R-squared`, 4),
+      AIC = round(AIC, 2),
+      BIC = round(BIC, 2),
+      AICc = round(AICc, 2)
+    )
+  
+  comparison_theme <- ttheme_default(
+    core = list(
+      fg_params = list(fontsize = 12),
+      bg_params = list(
+        fill = c("#F7F9FC", "white"),
+        col = "#C7CED8",
+        lwd = 0.8
+      ),
+      padding = unit(c(4, 4), "mm")
+    ),
+    colhead = list(
+      fg_params = list(
+        fontsize = 12,
+        fontface = "bold",
+        col = "white"
+      ),
+      bg_params = list(
+        fill = "#3F5F8A",
+        col = "#3F5F8A",
+        lwd = 0.8
+      ),
+      padding = unit(c(4, 4), "mm")
+    )
+  )
+  
+  comparison_table_body <- tableGrob(
+    comparison_table,
+    rows = NULL,
+    theme = comparison_theme
+  )
+  
+  comparison_title <- textGrob(
+    title_text,
+    gp = gpar(fontface = "bold", fontsize = 10)
+  )
+  
+  final_table <- arrangeGrob(
+    comparison_title,
+    comparison_table_body,
+    ncol = 1,
+    heights = unit.c(
+      unit(0.4, "in"),
+      sum(comparison_table_body$heights)
+    )
+  )
+  
+  grid.arrange(final_table)
+}
+```
+
+```{r}
+# present all the statistics and number of extreme points for each model
+single_model_stats_table <- function(model, title_text = "Model Statistics and Diagnostics",
+                                          outlier_cutoff = 4) {
+  
+  get_aicc <- function(model) {
+    n <- nobs(model)
+    k <- length(coef(model)) + 1
+    
+    AIC(model) + (2 * k * (k + 1)) / (n - k - 1)
+  }
+  
+  n <- nobs(model)
+  p <- length(coef(model))
+  
+  std_resid <- rstandard(model)
+  cooks_d <- cooks.distance(model)
+  leverage <- hatvalues(model)
+  
+  cook_cutoff <- 4 / n
+  leverage_cutoff <- 2 * (p + 1) / n
+  
+  is_outlier <- abs(std_resid) > outlier_cutoff
+  is_influential <- cooks_d > cook_cutoff
+  is_leverage <- leverage > leverage_cutoff
+  
+  model_stats <- tibble(
+  Statistic = c(
+    "R-squared",
+    "Adjusted R-squared",
+    "AIC",
+    "BIC",
+    "AICc",
+    "Number of outliers",
+    "Number of influential points",
+    "Number of leverage points",
+    "Number of any flagged points"
+  ),
+  Value = c(
+    sprintf("%.4f", summary(model)$r.squared),
+    sprintf("%.4f", summary(model)$adj.r.squared),
+    sprintf("%.4f", AIC(model)),
+    sprintf("%.4f", BIC(model)),
+    sprintf("%.4f", get_aicc(model)),
+    as.character(sum(is_outlier, na.rm = TRUE)),
+    as.character(sum(is_influential, na.rm = TRUE)),
+    as.character(sum(is_leverage, na.rm = TRUE)),
+    as.character(sum(is_outlier | is_influential | is_leverage, na.rm = TRUE))
+  )
+)
+  
+  model_stats_theme <- ttheme_default(
+    core = list(
+      fg_params = list(fontsize = 12),
+      bg_params = list(
+        fill = c("#F7F9FC", "white"),
+        col = "#C7CED8",
+        lwd = 0.8
+      ),
+      padding = unit(c(4, 4), "mm")
+    ),
+    colhead = list(
+      fg_params = list(
+        fontsize = 12,
+        fontface = "bold",
+        col = "white"
+      ),
+      bg_params = list(
+        fill = "#3F5F8A",
+        col = "#3F5F8A",
+        lwd = 0.8
+      ),
+      padding = unit(c(4, 4), "mm")
+    )
+  )
+  
+  model_stats_body <- tableGrob(
+    model_stats,
+    rows = NULL,
+    theme = model_stats_theme
+  )
+  
+  model_stats_title <- textGrob(
+    title_text,
+    gp = gpar(fontface = "bold", fontsize = 10)
+  )
+  
+  model_stats_final <- arrangeGrob(
+    model_stats_title,
+    model_stats_body,
+    ncol = 1,
+    heights = unit.c(
+      unit(0.4, "in"),
+      sum(model_stats_body$heights)
+    )
+  )
+  
+  grid.arrange(model_stats_final)
+}
+```
+
+```{r}
+## plot residual plots
+plot_main_diagnostics <- function(model,
+                                  caption = "Main residual diagnostic plots",
+                                  ncol = 2) {
+  library(ggplot2)
+  library(dplyr)
+  library(gridExtra)
+  library(grid)
+
+  diag_data <- model.frame(model) %>%
+    mutate(
+      .fitted = fitted(model),
+      .resid = resid(model),
+      .std_resid = rstandard(model)
+    )
+
+  plot_theme <- theme_minimal(base_size = 11) +
+    theme(
+      plot.title = element_text(face = "bold", size = 10),
+      axis.title = element_text(size = 9),
+      axis.text = element_text(size = 8),
+      panel.grid.minor = element_blank(),
+      plot.margin = margin(6, 6, 6, 6)
+    )
+
+  p1 <- ggplot(diag_data, aes(x = .fitted, y = .resid)) +
+    geom_point(alpha = 0.4) +
+    geom_smooth(method = "loess", se = FALSE, formula = y ~ x) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(
+      title = "Residuals vs Fitted",
+      x = "Fitted values",
+      y = "Residuals"
+    ) +
+    plot_theme
+
+  p2 <- ggplot(diag_data, aes(sample = .std_resid)) +
+    stat_qq(alpha = 0.4) +
+    stat_qq_line() +
+    labs(
+      title = "Normal Q-Q Plot",
+      x = "Theoretical quantiles",
+      y = "Standardized residuals"
+    ) +
+    plot_theme
+
+  p3 <- ggplot(diag_data, aes(x = .fitted, y = .std_resid)) +
+    geom_point(alpha = 0.4) +
+    geom_smooth(method = "loess", se = FALSE, formula = y ~ x) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(
+      title = "Fitted vs Standardized Residuals",
+      x = "Fitted values",
+      y = "Standardized residuals"
+    ) +
+    plot_theme
+
+  p4 <- ggplot(diag_data, aes(x = .std_resid)) +
+    geom_histogram(bins = 30, fill = "lightgray", color = "white") +
+    coord_cartesian(xlim = c(-4, 4)) +
+    labs(
+      title = "Histogram of Standardized Residuals",
+      x = "Standardized residuals",
+      y = "Count"
+    ) +
+    plot_theme
+
+  plot_grid <- arrangeGrob(
+    p1, p2,
+    p3, p4,
+    ncol = ncol
+  )
+
+  caption_grob <- textGrob(
+    caption,
+    x = 0.5,
+    hjust = 0.5,
+    gp = gpar(fontface = "bold", fontsize = 12)
+  )
+
+  grid.arrange(
+    plot_grid,
+    caption_grob,
+    ncol = 1,
+    heights = c(1, 0.06)
+  )
+}
+```
+
+```{r}
+plot_residuals_vs_predictors <- function(model,
+                                         data = NULL,
+                                         caption = "Residuals versus predictors",
+                                         ncol = 2,
+                                         interaction_pairs = NULL,
+                                         discrete_cutoff = 10,
+                                         y_zoom = c(-4, 4),
+                                         point_alpha = 0.25,
+                                         point_size = 0.7) {
+  library(ggplot2)
+  library(dplyr)
+  library(gridExtra)
+  library(grid)
+
+  mf <- model.frame(model)
+
+  if (is.null(data)) {
+    diag_data <- mf
+  } else {
+    diag_data <- data[rownames(mf), , drop = FALSE]
+  }
+
+  diag_data <- diag_data %>%
+    mutate(
+      .std_resid = rstandard(model)
+    )
+
+  response_vars <- all.vars(formula(model)[[2]])
+  predictor_names <- setdiff(all.vars(formula(model)[[3]]), response_vars)
+
+  plot_theme <- theme_minimal(base_size = 10) +
+    theme(
+      plot.title = element_text(face = "bold", size = 9),
+      axis.title = element_text(size = 8),
+      axis.text = element_text(size = 7),
+      panel.grid.minor = element_blank(),
+      plot.margin = margin(4, 4, 4, 4)
+    )
+
+  predictor_plots <- list()
+
+  for (var in predictor_names) {
+    x <- diag_data[[var]]
+    x_label <- gsub("_", " ", var)
+
+    is_discrete <- is.factor(x) ||
+      is.character(x) ||
+      is.logical(x) ||
+      (is.numeric(x) && length(unique(x)) <= discrete_cutoff)
+
+    if (is_discrete) {
+      p <- ggplot(diag_data, aes(x = factor(.data[[var]]), y = .std_resid)) +
+        geom_boxplot(outlier.shape = NA, linewidth = 0.3) +
+        geom_jitter(
+          width = 0.12,
+          alpha = point_alpha,
+          size = point_size
+        ) +
+        geom_hline(yintercept = 0, linetype = "dashed") +
+        coord_cartesian(ylim = y_zoom) +
+        labs(
+          title = paste("Residuals vs", x_label),
+          x = x_label,
+          y = "Standardized residuals"
+        ) +
+        plot_theme +
+        theme(axis.text.x = element_text(angle = 15, hjust = 1))
+    } else {
+      p <- ggplot(diag_data, aes(x = .data[[var]], y = .std_resid)) +
+        geom_point(
+          alpha = point_alpha,
+          size = point_size
+        ) +
+        geom_smooth(method = "loess", se = FALSE, formula = y ~ x, linewidth = 0.7) +
+        geom_hline(yintercept = 0, linetype = "dashed") +
+        coord_cartesian(ylim = y_zoom) +
+        labs(
+          title = paste("Residuals vs", x_label),
+          x = x_label,
+          y = "Standardized residuals"
+        ) +
+        plot_theme
+    }
+
+    predictor_plots[[var]] <- p
+  }
+
+  interaction_plots <- list()
+
+  if (!is.null(interaction_pairs)) {
+    for (pair in interaction_pairs) {
+      x_var <- pair[1]
+      group_var <- pair[2]
+
+      x_label <- gsub("_", " ", x_var)
+      group_label <- gsub("_", " ", group_var)
+
+      interaction_plots[[paste(x_var, group_var, sep = "_by_")]] <-
+        ggplot(
+          diag_data,
+          aes(
+            x = .data[[x_var]],
+            y = .std_resid,
+            color = factor(.data[[group_var]])
+          )
+        ) +
+        geom_point(alpha = 0.22, size = point_size) +
+        geom_smooth(method = "loess", se = FALSE, formula = y ~ x, linewidth = 0.7) +
+        geom_hline(yintercept = 0, linetype = "dashed") +
+        coord_cartesian(ylim = y_zoom) +
+        labs(
+          title = paste("Residuals vs", x_label, "by", group_label),
+          x = x_label,
+          y = "Standardized residuals",
+          color = group_label
+        ) +
+        plot_theme +
+        theme(
+          legend.position = "bottom",
+          legend.title = element_text(size = 7),
+          legend.text = element_text(size = 7)
+        )
+    }
+  }
+
+  all_plots <- c(predictor_plots, interaction_plots)
+
+  plot_grid <- arrangeGrob(
+    grobs = all_plots,
+    ncol = ncol
+  )
+
+  caption_grob <- textGrob(
+    caption,
+    x = 0.5,
+    hjust = 0.5,
+    gp = gpar(fontface = "bold", fontsize = 11)
+  )
+
+  grid.arrange(
+    plot_grid,
+    caption_grob,
+    ncol = 1,
+    heights = c(1, 0.05)
+  )
+}
+```
+
+```{r}
+plot_interaction_residuals <- function(model,
+                                       data,
+                                       x_var,
+                                       group_var,
+                                       caption = "Residuals by interaction term",
+                                       y_zoom = c(-4, 4),
+                                       x_zoom = NULL,
+                                       smooth_method = "lm") {
+  library(ggplot2)
+  library(dplyr)
+  library(gridExtra)
+  library(grid)
+
+  mf <- model.frame(model)
+
+  diag_data <- data[rownames(mf), , drop = FALSE] %>%
+    mutate(
+      .std_resid = rstandard(model)
+    )
+
+  # Optional automatic x-axis zoom using 1st and 99th percentiles
+  if (is.null(x_zoom)) {
+    x_zoom <- quantile(
+      diag_data[[x_var]],
+      probs = c(0.01, 0.99),
+      na.rm = TRUE
+    )
+  }
+
+  x_label <- gsub("_", " ", x_var)
+  group_label <- gsub("_", " ", group_var)
+
+  interaction_plot <- ggplot(
+    diag_data,
+    aes(x = .data[[x_var]], y = .std_resid)
+  ) +
+    geom_point(alpha = 0.25, size = 0.7) +
+    geom_smooth(
+      method = smooth_method,
+      se = FALSE,
+      linewidth = 0.8
+    ) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    coord_cartesian(
+      xlim = x_zoom,
+      ylim = y_zoom
+    ) +
+    facet_wrap(vars(.data[[group_var]]), nrow = 1) +
+    labs(
+      title = paste("Residuals vs", x_label, "by", group_label),
+      x = x_label,
+      y = "Standardized residuals"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      plot.title = element_text(face = "bold", size = 12),
+      strip.text = element_text(face = "bold", size = 10),
+      axis.title = element_text(size = 10),
+      axis.text = element_text(size = 8),
+      panel.grid.minor = element_blank(),
+      plot.margin = margin(6, 6, 6, 6)
+    )
+
+  caption_grob <- textGrob(
+    caption,
+    x = 0.5,
+    hjust = 0.5,
+    gp = gpar(fontface = "bold", fontsize = 11)
+  )
+
+  grid.arrange(
+    interaction_plot,
+    caption_grob,
+    ncol = 1,
+    heights = c(1, 0.06)
+  )
+}
+```
+
+```{r}
+boxcox_transform <- function(y, lambda) {
+  gm_y <- exp(mean(log(y)))
+  
+  if (abs(lambda) < 0.001) {
+    gm_y * log(y)
+  } else {
+    (gm_y^(1 - lambda)) * ((y^lambda - 1) / lambda)
+  }
+}
+```
+
+# Model selection
+
+## Data Splitting
+
+Before Model selection, we split the data set into 80% training data and 20% test data. The training data were used to fit and refine models, and the test data were used for validation.From Table 1.5 and 1.6,the numerical predictors in training and test set have similar means and standard deviations,and the categorical predictors have similar distributions. Hence, the test data is appropriate for evaluating the prediction performance for the final model.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6,out.width="100%"}
+
+##split the data into 80% train, 20% test
+set.seed(302)
+n <- nrow(clean_ames)
+train_index <- sample(1:n, size = 0.8*n)
+clean_ames_train <- clean_ames[train_index,]
+clean_ames_test <- clean_ames[-train_index,]
+numeric_vars <- c(
+  "Sale_Price",
+  "log_sale_price",
+  "Gr_Liv_Area",
+  "Total_Bsmt_SF",
+  "House_Age",
+  "Full_Bath"
+)
+
+numeric_comparison <- bind_rows(
+  clean_ames_train %>%
+    dplyr::select(all_of(numeric_vars)) %>%
+    mutate(Dataset = "Train"),
+
+  clean_ames_test %>%
+    dplyr::select(all_of(numeric_vars)) %>%
+    mutate(Dataset = "Test")
+) %>%
+  pivot_longer(
+    cols = all_of(numeric_vars),
+    names_to = "Variable",
+    values_to = "Value"
+  ) %>%
+  group_by(Dataset, Variable) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SD = sd(Value, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = Dataset,
+    values_from = c(Mean, SD),
+    names_glue = "{Dataset}_{.value}"
+  ) %>%
+  mutate(
+    Pooled_SD = sqrt((Train_SD^2 + Test_SD^2) / 2),
+    SMD = (Train_Mean - Test_Mean) / Pooled_SD,
+    Variable = case_when(
+      Variable == "Sale_Price" ~ "Sale price",
+      Variable == "log_sale_price" ~ "Log price",
+      Variable == "Gr_Liv_Area" ~ "Living area",
+      Variable == "Total_Bsmt_SF" ~ "Basement area",
+      Variable == "House_Age" ~ "House age",
+      Variable == "Full_Bath" ~ "Full bath",
+      TRUE ~ Variable
+    )
+  ) %>%
+  dplyr::select(
+    Variable,
+    `Train Mean` = Train_Mean,
+    `Test Mean` = Test_Mean,
+    `Train SD` = Train_SD,
+    `Test SD` = Test_SD,
+    SMD
+  ) %>%
+  mutate(
+    across(where(is.numeric), ~ round(.x, 3))
+  )
+
+numeric_comparison_theme <- ttheme_default(
+  core = list(
+    fg_params = list(fontsize = 8),
+    bg_params = list(
+      fill = c("#F7F9FC", "white"),
+      col = "#C7CED8",
+      lwd = 0.6
+    ),
+    padding = unit(c(2, 2), "mm")
+  ),
+  colhead = list(
+    fg_params = list(
+      fontsize = 8,
+      fontface = "bold",
+      col = "white"
+    ),
+    bg_params = list(
+      fill = "#3F5F8A",
+      col = "#3F5F8A",
+      lwd = 0.6
+    ),
+    padding = unit(c(2, 2), "mm")
+  )
+)
+
+numeric_comparison_body <- tableGrob(
+  numeric_comparison,
+  rows = NULL,
+  theme = numeric_comparison_theme
+)
+
+numeric_comparison_body$widths <- unit(
+  c(1.5, 1, 1, 1, 1, 0.8),
+  "null"
+)
+
+numeric_comparison_title <- textGrob(
+  "Table 1.5 Comparison of Numerical Variables Between Training and Test Sets",
+  gp = gpar(fontface = "bold", fontsize = 10)
+)
+
+numeric_comparison_final <- arrangeGrob(
+  numeric_comparison_title,
+  numeric_comparison_body,
+  ncol = 1,
+  heights = unit.c(
+    unit(0.35, "in"),
+    sum(numeric_comparison_body$heights)
+  )
+)
+
+grid.arrange(numeric_comparison_final)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=3.5, out.width="100%"}
+categorical_vars <- c(
+  "Overall_Qual_Category",
+  "Fireplace_Category"
+)
+
+categorical_comparison <- bind_rows(
+  clean_ames_train %>%
+    dplyr::select(all_of(categorical_vars)) %>%
+    mutate(Dataset = "Train"),
+
+  clean_ames_test %>%
+    dplyr::select(all_of(categorical_vars)) %>%
+    mutate(Dataset = "Test")
+) %>%
+  pivot_longer(
+    cols = all_of(categorical_vars),
+    names_to = "Variable",
+    values_to = "Category"
+  ) %>%
+  group_by(Dataset, Variable, Category) %>%
+  summarise(
+    Count = n(),
+    .groups = "drop_last"
+  ) %>%
+  mutate(
+    Percent = Count / sum(Count) * 100
+  ) %>%
+  ungroup() %>%
+  dplyr::select(Dataset, Variable, Category, Count, Percent) %>%
+  pivot_wider(
+    names_from = Dataset,
+    values_from = c(Count, Percent),
+    names_glue = "{Dataset}_{.value}",
+    values_fill = 0
+  ) %>%
+  mutate(
+    `Diff (%)` = Train_Percent - Test_Percent,
+
+    Variable = case_when(
+      Variable == "Overall_Qual_Category" ~ "Quality",
+      Variable == "Fireplace_Category" ~ "Fireplace",
+      TRUE ~ Variable
+    ),
+
+    Category = case_when(
+      Category == "0 fireplaces" ~ "0",
+      Category == "1 fireplace" ~ "1",
+      Category == "2 or more fireplaces" ~ "2+",
+      TRUE ~ as.character(Category)
+    ),
+
+    `Train n (%)` = paste0(
+      Train_Count, " (", round(Train_Percent, 1), "%)"
+    ),
+
+    `Test n (%)` = paste0(
+      Test_Count, " (", round(Test_Percent, 1), "%)"
+    ),
+
+    `Diff (%)` = round(`Diff (%)`, 1)
+  ) %>%
+  dplyr::select(
+    Variable,
+    Category,
+    `Train n (%)`,
+    `Test n (%)`,
+    `Diff (%)`
+  )
+
+categorical_comparison_theme <- ttheme_default(
+  core = list(
+    fg_params = list(fontsize = 8),
+    bg_params = list(
+      fill = c("#F7F9FC", "white"),
+      col = "#C7CED8",
+      lwd = 0.6
+    ),
+    padding = unit(c(2, 2), "mm")
+  ),
+  colhead = list(
+    fg_params = list(
+      fontsize = 8,
+      fontface = "bold",
+      col = "white"
+    ),
+    bg_params = list(
+      fill = "#3F5F8A",
+      col = "#3F5F8A",
+      lwd = 0.6
+    ),
+    padding = unit(c(2, 2), "mm")
+  )
+)
+
+categorical_comparison_body <- tableGrob(
+  categorical_comparison,
+  rows = NULL,
+  theme = categorical_comparison_theme
+)
+
+categorical_comparison_body$widths <- unit(
+  c(1.1, 1.2, 1.4, 1.4, 0.9),
+  "null"
+)
+
+categorical_comparison_title <- textGrob(
+  "Table 1.6 Comparison of Categorical Variables Between Training and Test Sets",
+  gp = gpar(fontface = "bold", fontsize = 10)
+)
+
+categorical_comparison_final <- arrangeGrob(
+  categorical_comparison_title,
+  categorical_comparison_body,
+  ncol = 1,
+  heights = unit.c(
+    unit(0.35, "in"),
+    sum(categorical_comparison_body$heights)
+  )
+)
+
+grid.arrange(categorical_comparison_final)
+```
+
+## Model 1: Baseline Model without flagged points
+
+$$
+\color{black}{
+\begin{aligned}
+\log(\text{Sale Price}_i) =\;& \beta_0
++ \beta_1 \text{Ground Living Area}_i
++ \beta_2 \text{Total Basement Area}_i
++ \beta_3 \text{House Age}_i \\
+&+ \beta_4 \text{Quality Average}_i
++ \beta_5 \text{Quality Good}_i
++ \beta_6 \text{One Fireplace}_i \\
+&+ \beta_7 \text{Two or More Fireplaces}_i
++ \beta_8 \text{Number of Full Bathroom}_i
++ \varepsilon_i
+\end{aligned}
+}
+$$
+
+We started with fitting the preliminary model. From Table 1.7 and 1.7.1, all the predictors have coefficient signs consistent with expectations, and the model has 0.8071 adjusted $\color{black}{R^2}$. We noticed the number of full bathrooms is not statistically significant under the significance level of 5%, it has a p-value of 0.631.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Fit linear regression model
+model1 <- lm(
+  log_sale_price ~
+    Gr_Liv_Area +
+    Total_Bsmt_SF +
+    House_Age +
+    Overall_Qual_Category +
+    Fireplace_Category +
+    Full_Bath,
+  data = clean_ames_train
+)
+
+# Create regression coefficient table
+make_regression_table(model1, "Table 1.7 Baseline Model Coefficients")
+```
+
+```{r}
+single_model_stats_table(model1, "Table 1.7.1 Model 1 Fit Statistics")
+```
+
+```{r}
+n <- nrow(clean_ames_train)
+p <- length(coef(model1))
+
+outlier_cutoff <- 4
+cook_cutoff <- 4 / n
+leverage_cutoff <- 2 * (p + 1) / n
+
+diagnostic_points <- clean_ames_train %>%
+  mutate(
+    row_id = row_number(),
+    std_resid = rstandard(model1),
+    cooks_d = cooks.distance(model1),
+    leverage = hatvalues(model1),
+    
+    is_outlier = abs(std_resid) > outlier_cutoff,
+    is_influential = cooks_d > cook_cutoff,
+    is_leverage = leverage > leverage_cutoff
+  )
+
+diagnostic_counts <- diagnostic_points %>%
+  summarise(
+    number_of_outliers = sum(is_outlier, na.rm = TRUE),
+    number_of_influential_points = sum(is_influential, na.rm = TRUE),
+    number_of_leverage_points = sum(is_leverage, na.rm = TRUE),
+    number_of_any_problem_points = sum(
+      is_outlier | is_influential | is_leverage,
+      na.rm = TRUE
+    )
+  )
+
+```
+
+```{r}
+clean_ames_train$std_resid <- rstandard(model1)
+clean_ames_train$cooks_d <- cooks.distance(model1)
+clean_ames_train$leverage <- hatvalues(model1)
+
+problem_points1 <- clean_ames_train %>%
+  mutate(row_id = row_number()) %>%
+  filter(abs(std_resid) > 4 | cooks_d > 4 / nrow(clean_ames_train))
+
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=4.5, out.width="95%"}
+plot_main_diagnostics(model1, caption = "Figure 1.5 Residual plots and QQ plot for model 1")
+```
+
+Figure 1.5 and 1.6 show that residuals have no severe systematic pattern and are generally centered around 0, while the QQ plot has a strong tail deviation. So that model 1 does not fully satisfy the normality assumption.
+
+To investigate this issue, we calculated standardized residuals, Cook’s distance, and leverage values to identify outliers, influential points and leverage points. We found out that the most concerned observations are those with very high residuals or Cook’s distance, because those houses mostly have decent house conditions, large living area and basement area, but were sold at a really low price. Since those cases may represent unusual sale circumstances, which is not related to any housing characteristics in our research question, those observations are not in the housing population we are interested in. As a result, we decided to remove them from our training data.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=5, out.width="95%"}
+plot_residuals_vs_predictors(model1 ,caption ="Figure 1.6 Residuals V.S predictors for model 1")
+```
+
+After removing these observations, we refit the model 1.From Table 1.8 and 1.8.1, most of the coefficients remained with the expected sign, all of them are statistically significant, and the adjusted $\color{black}{R^2}$ increase from 0.8071 to 0.8702. The residual plots in Figure 1.7 and 1.8 remained acceptable, but the QQ-plot is less deviated and closer to a straight line. We also checked multicollinearity using VIFs. From Table 1.9, none of the VIF or GVIF values exceeded 5, suggesting no severe multicollinearity among predictors. However, full bathrooms changed from non-significant in the original model to significant after removing flagged points. Hence, the predictor full bathrooms is really sensitive to abnormal observations, so we removed it from our model for stability.
+
+```{r}
+rows_to_remove1 <- problem_points1$row_id
+
+clean_ames_train_removed1 <- clean_ames_train %>%
+  mutate(row_id = row_number()) %>%
+  filter(!row_id %in% rows_to_remove1)
+
+model_removed1 <- lm(
+  log_sale_price ~
+    Gr_Liv_Area +
+    Total_Bsmt_SF +
+    House_Age +
+    Overall_Qual_Category +
+    Fireplace_Category+
+    Full_Bath,
+  data = clean_ames_train_removed1
+)
+make_regression_table(model_removed1,"Table 1.8 Coefficients of Baseline Model without extreme points")
+```
+
+```{r}
+single_model_stats_table(model_removed1, "Table 1.8.1 Model 1 without extreme points fit Statistics")
+```
+
+### 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=6, out.width="95%"}
+
+plot_main_diagnostics(model_removed1, caption = "Figure 1.7  Residual plots and QQ plot for model 1 without extreme points")
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=5.5, out.width="95%"}
+plot_residuals_vs_predictors(model_removed1 ,caption ="Figure 1.8 Residuals V.S predictors for model 1 without extreme points")
+```
+
+```{r}
+vif_values <- car::vif(model_removed1)
+
+vif_table <- as.data.frame(vif_values) %>%
+  rownames_to_column(var = "Predictor")
+
+# If model has categorical predictors, car::vif() returns GVIF
+if ("GVIF" %in% names(vif_table)) {
+  vif_table <- vif_table %>%
+    mutate(
+      `GVIF^(1/(2*Df))` = round(`GVIF^(1/(2*Df))`, 3),
+      GVIF = round(GVIF, 3)
+    )
+} else {
+  vif_table <- vif_table %>%
+    rename(VIF = vif_values) %>%
+    mutate(VIF = round(VIF, 3))
+}
+
+vif_theme <- ttheme_default(
+  core = list(
+    fg_params = list(fontsize = 12),
+    bg_params = list(
+      fill = c("#F7F9FC", "white"),
+      col = "#C7CED8",
+      lwd = 0.8
+    ),
+    padding = unit(c(4, 4), "mm")
+  ),
+  colhead = list(
+    fg_params = list(
+      fontsize = 12,
+      fontface = "bold",
+      col = "white"
+    ),
+    bg_params = list(
+      fill = "#3F5F8A",
+      col = "#3F5F8A",
+      lwd = 0.8
+    ),
+    padding = unit(c(4, 4), "mm")
+  )
+)
+
+vif_table_body <- tableGrob(
+  vif_table,
+  rows = NULL,
+  theme = vif_theme
+)
+
+vif_table_title <- textGrob(
+  "Table 1.9 VIF Values for Model 1 without extreme points",
+  gp = gpar(fontface = "bold", fontsize = 10)
+)
+
+vif_table_final <- arrangeGrob(
+  vif_table_title,
+  vif_table_body,
+  ncol = 1,
+  heights = unit.c(
+    unit(0.4, "in"),
+    sum(vif_table_body$heights)
+  )
+)
+
+grid.arrange(vif_table_final)
+```
+
+## Model 2: Removing number of full bathrooms
+
+$$
+\color{black}{
+\begin{aligned}
+\log(\text{Sale Price}_i) =\;& \beta_0
++ \beta_1 \text{Ground Living Area}_i
++ \beta_2 \text{Total Basement Area}_i
++ \beta_3 \text{House Age}_i \\
+&+ \beta_4 \text{Quality Average}_i
++ \beta_5 \text{Quality Good}_i
++ \beta_6 \text{One Fireplace}_i \\
+&+ \beta_7 \text{Two or More Fireplaces}_i
++ \varepsilon_i
+\end{aligned}
+}
+$$
+
+For model 2, we removed the predictor number of full bathrooms and kept other predictors. Table 2.0 and 2.0.1 show that the coefficients are really close to those of model 1, the adjusted $\color{black}{R^2}$ is 0.8700, only 0.0002 lower than model 1. The decrease in adjusted $\color{black}{R^2}$ is acceptable because it produced a more stable model.
+
+```{r}
+model2 <- lm(
+  log_sale_price ~
+    Gr_Liv_Area +
+    Total_Bsmt_SF +
+    House_Age +
+    Overall_Qual_Category +
+    Fireplace_Category,
+  data = clean_ames_train_removed1
+)
+make_regression_table(model2,"Table 2.0 Model 2 Coefficients")
+```
+
+```{r}
+single_model_stats_table(model2, "Table 2.0.1 Model 2 Fit Statistics")
+```
+
+## 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=6,out.width="95%"}
+plot_main_diagnostics(model2, caption = "Figure 1.9 Residual plots and QQ plot for model 2")
+```
+
+The residual plots are similar to those of model 1.Although the QQ-plot seems slightly more deviated, the whole line is still close to the reference line. This suggests that the normality assumption of model 2 is less satisfied than model 1. Meanwhile, the residual versus house age plot and scatter plot of log sale price versus house age in Figure 2.0 and 2.1 suggest that house age may not be perfectly linear with log sale price. Specifically, the relationship tends to flatten or curve slightly for older houses.Therefore, we considered adding a transformation on house age.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=5.5,out.width="95%"}
+plot_residuals_vs_predictors(model2 ,caption ="Figure 2.0 Residuals V.S predictors for model 1")
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=5.5, out.width="95%"}
+library(ggplot2)
+library(patchwork)
+library(stringr)
+
+plot_data <- clean_ames_train_removed1
+
+# Zoom x-axis for numerical plots using 1st and 99th percentiles
+gr_xlim <- quantile(plot_data$Gr_Liv_Area, probs = c(0, 1), na.rm = TRUE)
+bsmt_xlim <- quantile(plot_data$Total_Bsmt_SF, probs = c(0, 1), na.rm = TRUE)
+age_xlim <- quantile(plot_data$House_Age, probs = c(0, 1), na.rm = TRUE)
+
+scatter_theme <- theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 11),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 9),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(6, 6, 6, 6)
+  )
+
+# 1. log_sale_price vs Gr_Liv_Area
+p1 <- ggplot(plot_data, aes(x = Gr_Liv_Area, y = log_sale_price)) +
+  geom_point(alpha = 0.5, size = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.8) +
+  coord_cartesian(xlim = gr_xlim) +
+  labs(
+    x = "Above-ground living area",
+    y = "Log sale price",
+    title = "Living Area"
+  ) +
+  scatter_theme
+
+# 2. log_sale_price vs Total_Bsmt_SF
+p2 <- ggplot(plot_data, aes(x = Total_Bsmt_SF, y = log_sale_price)) +
+  geom_point(alpha = 0.5, size = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.8) +
+  coord_cartesian(xlim = bsmt_xlim) +
+  labs(
+    x = "Total basement area",
+    y = "Log sale price",
+    title = "Basement Area"
+  ) +
+  scatter_theme
+
+# 3. log_sale_price vs House_Age
+p3 <- ggplot(plot_data, aes(x = House_Age, y = log_sale_price)) +
+  geom_point(alpha = 0.5, size = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.8) +
+  coord_cartesian(xlim = age_xlim) +
+  labs(
+    x = "House age",
+    y = "Log sale price",
+    title = "House Age"
+  ) +
+  scatter_theme
+
+# 4. log_sale_price vs Overall_Qual_Category
+p4 <- ggplot(plot_data, aes(x = Overall_Qual_Category, y = log_sale_price)) +
+  geom_boxplot(outlier.shape = NA, linewidth = 0.4) +
+  geom_jitter(width = 0.15, alpha = 5, size = 0.6) +
+  labs(
+    x = "Overall quality category",
+    y = "Log sale price",
+    title = "Overall Quality"
+  ) +
+  scatter_theme
+
+# 5. log_sale_price vs Fireplace_Category
+p5 <- ggplot(plot_data, aes(x = Fireplace_Category, y = log_sale_price)) +
+  geom_boxplot(outlier.shape = NA, linewidth = 0.4) +
+  geom_jitter(width = 0.15, alpha = 5, size = 0.6) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 12)) +
+  labs(
+    x = "Fireplace category",
+    y = "Log sale price",
+    title = "Fireplace Category"
+  ) +
+  scatter_theme
+
+# 6. log_sale_price vs Full_Bath
+p6 <- ggplot(plot_data, aes(x = factor(Full_Bath), y = log_sale_price)) +
+  geom_boxplot(outlier.shape = NA, linewidth = 0.4) +
+  geom_jitter(width = 0.15, alpha = 5, size = 0.6) +
+  labs(
+    x = "Number of full bathrooms",
+    y = "Log sale price",
+    title = "Full Bathrooms"
+  ) +
+  scatter_theme
+
+# Combine plots
+(p1 + p2) / (p3 + p4) / (p5 + p6) +
+  plot_annotation(
+    caption = "Figure 2.1 Log Sale Price versus Predictors",
+    theme = theme(
+      plot.caption = element_text(
+        hjust = 0.5,
+        face = "bold",
+        size = 12,
+        margin = margin(t = 8)
+      )
+    )
+  )
+```
+
+## Model 3: Quadratic house age
+
+$$
+\color{black}{
+\begin{aligned}
+\log(\text{Sale Price}_i) =\;& \beta_0
++ \beta_1 \text{Ground Living Area}_i
++ \beta_2 \text{Total Basement Area}_i
++ \beta_3 \text{House Age}_i \\
+&+ \beta_4 \text{House Age}_i^2
++ \beta_5 \text{Quality Average}_i
++ \beta_6 \text{Quality Good}_i \\
+&+ \beta_7 \text{One Fireplace}_i
++ \beta_8 \text{Two or More Fireplaces}_i
++ \varepsilon_i
+\end{aligned}
+}
+$$
+
+By trial and error, we added a quadratic term for house age. From Table 2.1 and 2.1.1, all the coefficients remained significant, and the adjusted $\color{black}{R^2}$ increase to 0.8715 compared to other two models. The residual versus house age plot in Figure 2.3 shows a reduced non-linear pattern, and the other residual plots appeared more random.The Q-Q plot still has minor tail deviations, but the points were closer to the reference line, suggesting the normality assumption is better satisfied.
+
+```{r}
+## transformation on House Age due to the residual plot and the scatter plot of y VS house age
+model3 <- lm(
+  log_sale_price ~
+    Gr_Liv_Area +
+    Total_Bsmt_SF +
+    House_Age +
+    I(House_Age^2)+
+    Overall_Qual_Category +
+    Fireplace_Category,
+  data = clean_ames_train_removed1
+)
+
+make_regression_table(model3, "Table 2.1 Model 3 Coefficients")
+```
+
+```{r}
+single_model_stats_table(model3, "Table 2.1.1 Model 3 Fit Statistics")
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE,fig.width=10, fig.height=6, out.width="95%"}
+plot_main_diagnostics(model3, caption = "Figure 2.2 Residual plots and QQ plot for model 3")
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE,fig.width=10, fig.height=5.5, out.width="95%"}
+plot_residuals_vs_predictors(model3,
+                             caption ="Figure 2.3 Residuals V.S predictors for model 3"
+                            )
+
+```
+
+## Model 4: Box-Cox on sale price
+
+$$
+\color{black}{
+\begin{aligned}
+\psi(\text{Sale Price}_i, \lambda) =\;& \beta_0
++ \beta_1 \text{Ground Living Area}_i
++ \beta_2 \text{Total Basement Area}_i
++ \beta_3 \text{House Age}_i \\
+&+ \beta_4 \text{House Age}_i^2
++ \beta_5 \text{Quality Average}_i
++ \beta_6 \text{Quality Good}_i \\
+&+ \beta_7 \text{One Fireplace}_i
++ \beta_8 \text{Two or More Fireplaces}_i
++ \varepsilon_i
+\end{aligned}
+}
+$$ $$
+\color{black}{
+\psi(Y_i,\lambda)=
+\begin{cases}
+gm(Y)^{1-\lambda}\dfrac{Y_i^\lambda-1}{\lambda}, & \lambda \neq 0,\\[1em]
+gm(Y)\log(Y_i), & \lambda = 0.
+\end{cases}
+}
+$$
+
+```{r}
+# get lambda value of Box-Cox transformation
+boxcox_base_model <- lm(
+  Sale_Price ~
+    Gr_Liv_Area +
+    Total_Bsmt_SF +
+    House_Age +
+    I(House_Age^2) +
+    Overall_Qual_Category +
+    Fireplace_Category,
+  data = clean_ames_train_removed1
+)
+
+boxcox_result <- MASS::boxcox(
+  boxcox_base_model,
+  lambda = seq(-2, 2, by = 0.01),
+  xlab = expression(lambda)
+)
+
+lambda_hat <- boxcox_result$x[which.max(boxcox_result$y)]
+
+# add vertical line
+abline(v = lambda_hat, col = "red", lty = 2, lwd = 2)
+
+# add label
+text(
+  x = lambda_hat,
+  y = max(boxcox_result$y) - 20,
+  labels = bquote(lambda == .(round(lambda_hat, 2))),
+  col = "red",
+  pos = 4,
+  cex = 1
+)
+```
+
+In Model 4 we apply a Box-Cox transformation with $\color{black}{\lambda} =$ -0.08 on sale price to check whether it’s improved over the log transformation. From Table 2.2 and 2.2.1, the coefficients are very different from other models but with the same direction and all of them are statistically significant. This is expected because our lambda value is almost zero, that means the Box-Cox transformed sale price is really close to a scaled log transformation. The residual plots and Q-Q plot show a decent evidence of satisfying all assumptions, but the Q-Q plot deviates more on tails and the adjusted $\color{black}{R^2}$ decreases from 0.8715 to 0.8711. Since the log model has simpler interpretation and better diagnostics than the Box-Cox model, we keep the log sale price.
+
+```{r}
+# add box-cox response in the training dataset
+clean_ames_train_removed1 <- clean_ames_train_removed1 %>%
+  mutate(
+    bc_sale_price = boxcox_transform(Sale_Price, lambda_hat)
+  )
+
+clean_ames_test <- clean_ames_test %>%
+  mutate(
+    bc_sale_price = boxcox_transform(Sale_Price, lambda_hat)
+  )
+```
+
+```{r}
+# fit the model with box-coxed response
+model3_boxcox_y <- lm(
+  bc_sale_price ~
+    Gr_Liv_Area +
+    Total_Bsmt_SF +
+    House_Age +
+    I(House_Age^2) +
+    Overall_Qual_Category +
+    Fireplace_Category,
+  data = clean_ames_train_removed1
+)
+make_regression_table(model3_boxcox_y,"Table 2.2 Model 4 Coefficients")
+```
+
+```{r}
+single_model_stats_table(model3_boxcox_y, "Table 2.2.1 Model 4 Fit Statistics")
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE,fig.width=10, fig.height=5.5, out.width="95%"}
+plot_main_diagnostics(
+  model3_boxcox_y,
+  caption = "Figure 2.4 Residual plots and QQ plot for model 2"
+)
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE,fig.width=10, fig.height=5.5, out.width="95%"}
+plot_residuals_vs_predictors(model3_boxcox_y, caption = "Figure 2.5 Box-Cox transformed model 3 vs predictors")
+```
+
+## Model 5 & Model 6: Adding interaction term
+
+$$
+\color{black}{
+\begin{aligned}
+\log(\text{Sale Price}_i) =\;& \beta_0
++ \beta_1 \text{Ground Living Area}_i
++ \beta_2 \text{Total Basement Area}_i
++ \beta_3 \text{House Age}_i \\
+&+ \beta_4 \text{House Age}_i^2
++ \beta_5 \text{Quality Average}_i
++ \beta_6 \text{Quality Good}_i \\
+&+ \beta_7 \text{One Fireplace}_i
++ \beta_8 \text{Two or More Fireplaces}_i \\
+&+ \beta_9(\text{Ground Living Area}_i \times \text{Quality Average}_i) \\
+&+ \beta_{10}(\text{Ground Living Area}_i \times \text{Quality Good}_i)
++ \varepsilon_i
+\end{aligned}
+}
+$$
+
+For model 5, we added an interaction term between above ground living area and overall quality category. The interaction is motivated by Zietz, Zietz, and Sirmans (2008). It studies the consistency of factors that affect housing price, which makes it possible that an extra unit of living area may be valued differently depending on the overall quality of the house. Model 6 used backward BIC auto-selection starting from a model including this interaction and full bathrooms. The selected BIC model is the same as model 5. From Table 2.4 and 2.4.1, the coefficients are really close to other models except for the interaction term. The residual plots are good enough to satisfy linear and constant variance assumption. Although the adjusted $\color{black}{R^2}$ increases to 0.8734, the interaction term is not significant and the Q-Q plot deviates more. Therefore, Model 5 and Model 6 do not outperform other models.
+
+```{r}
+model5 <- lm(
+  log_sale_price ~
+    Gr_Liv_Area +
+    Total_Bsmt_SF +
+    House_Age +
+    I(House_Age^2) +
+    Overall_Qual_Category +
+    Fireplace_Category +
+    Gr_Liv_Area*Overall_Qual_Category,
+  data = clean_ames_train_removed1
+)
+
+make_regression_table(model5, "Table 2.3 model 5 Coefficients")
+```
+
+```{r}
+## Back ward BIC with all the added predictors so far in the baseline model
+baseline_model <- lm(
+  log_sale_price ~
+    Gr_Liv_Area +
+    Total_Bsmt_SF +
+    House_Age +
+    I(House_Age^2) +
+    Overall_Qual_Category +
+    Fireplace_Category +
+    Full_Bath +
+    Gr_Liv_Area*Overall_Qual_Category,
+  data = clean_ames_train_removed1
+)
+
+backward_model <- step(
+  baseline_model,
+  direction = "backward",
+  k = log(nrow(clean_ames_train_removed1)),
+  trace = 0
+)
+make_regression_table(backward_model, "Table 2.4 model 6 Coefficients")
+```
+
+```{r}
+single_model_stats_table(model5,"Table 2.4.1 Model 5 & 6 Fit Statistics")
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=5.5, out.width="95%"}
+plot_main_diagnostics(model5, caption = "Figure 2.6 Residual plots and QQ plot for model 5 & 6")
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=5.5, out.width="95%"}
+plot_residuals_vs_predictors(model5,
+                             caption ="Figure 2.7 Residuals V.S predictors for model 5 & 6"
+                            )
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width=10, fig.height=4.5, out.width="100%"}
+plot_interaction_residuals(
+  model5,
+  data = clean_ames_train_removed1,
+  x_var = "Gr_Liv_Area",
+  group_var = "Overall_Qual_Category",
+  caption = "Figure 2.8 Standardized Residuals versus Living Area by Overall Quality for Model 5 & 6"
+)
+```
+
+## Final Model: Model 3
+
+$$
+\color{black}{
+\begin{aligned}
+\widehat{\log(\text{Sale Price}_i)} =\;&
+11.25478
++ 0.00030 \times\text{Ground Living Area}_i
++ 0.00022 \times\text{Total Basement Area}_i \\
+&- 0.00535 \times\text{House Age}_i
++ 0.00002 \times\text{House Age}_i^2 \\
+&+ 0.16907 \times\text{Quality Average}_i
++ 0.28792 \times\text{Quality Good}_i \\
+&+ 0.08325 \times\text{One Fireplace}_i
++ 0.14625\times\text{Two or More Fireplaces}_i
+\end{aligned}
+}
+$$
+
+Our final model is model 3. Compared with the preliminary model, it removed influential points and outliers that were inconsistent with typical housing sales, excluded the unstable full bathrooms predictor, and added a quadratic house age term to improve linearity. From Table 2.5 and 2.6, model 3 has the best balance of adjusted $\color{black}{R^2}$ , AIC, BIC, AICc, significant predictors and flagged points among all the candidate models.
+
+```{r}
+# Summary of all the criteria 
+make_model_comparison_table(
+  model_removed1,
+  model2,
+  model3,
+  model3_boxcox_y,
+  model5,
+  backward_model,
+  model_names = c(
+    "Model 1",
+    "Model 2",
+    "Model 3",
+    "Model 4",
+    "Model 5",
+    "Model 6"
+  ),
+  title_text = "Table 2.5 Model Comparison Statistics"
+)
+```
+
+```{r}
+# Summary table of all the flagged points for each model
+model_list <- list(
+  "Model 1" = model_removed1,
+  "Model 2" = model2,
+  "Model 3" = model3,
+  "Model 4" = model3_boxcox_y,
+  "Model 5" = model5,
+  "Model 6" = backward_model
+)
+point_diagnostic_table <- bind_rows(
+  lapply(names(model_list), function(model_name) {
+    model <- model_list[[model_name]]
+    
+    n <- nobs(model)
+    p <- length(coef(model))
+    
+    std_resid <- rstandard(model)
+    cooks_d <- cooks.distance(model)
+    leverage <- hatvalues(model)
+    
+    outlier_cutoff <- 4
+    cook_cutoff <- 4 / n
+    leverage_cutoff <- 2 * (p + 1) / n
+    
+    is_outlier <- abs(std_resid) > outlier_cutoff
+    is_influential <- cooks_d > cook_cutoff
+    is_leverage <- leverage > leverage_cutoff
+    
+    tibble(
+      Model = model_name,
+      Outliers = sum(is_outlier, na.rm = TRUE),
+      `Influential points` = sum(is_influential, na.rm = TRUE),
+      `Leverage points` = sum(is_leverage, na.rm = TRUE),
+      `Any flagged points` = sum(
+        is_outlier | is_influential | is_leverage,
+        na.rm = TRUE
+      )
+    )
+  })
+)
+
+point_diagnostic_theme <- ttheme_default(
+  core = list(
+    fg_params = list(fontsize = 11),
+    bg_params = list(
+      fill = c("#F7F9FC", "white"),
+      col = "#C7CED8",
+      lwd = 0.8
+    ),
+    padding = unit(c(4, 4), "mm")
+  ),
+  colhead = list(
+    fg_params = list(
+      fontsize = 11,
+      fontface = "bold",
+      col = "white"
+    ),
+    bg_params = list(
+      fill = "#3F5F8A",
+      col = "#3F5F8A",
+      lwd = 0.8
+    ),
+    padding = unit(c(4, 4), "mm")
+  )
+)
+
+point_diagnostic_table_body <- tableGrob(
+  point_diagnostic_table,
+  rows = NULL,
+  theme = point_diagnostic_theme
+)
+
+point_diagnostic_title <- textGrob(
+  "Table 2.6 Number of Flagged Observations by Model",
+  gp = gpar(fontface = "bold", fontsize = 10)
+)
+
+point_diagnostic_table_final <- arrangeGrob(
+  point_diagnostic_title,
+  point_diagnostic_table_body,
+  ncol = 1,
+  heights = unit.c(
+    unit(0.4, "in"),
+    sum(point_diagnostic_table_body$heights)
+  )
+)
+
+grid.arrange(point_diagnostic_table_final)
+```
+
+# Final model inference and results
+
+## Final model
+
+$$
+\color{black}{
+\begin{aligned}
+\widehat{\log(\text{Sale Price}_i)} =\;&
+11.25478
++ 0.00030 \times\text{Ground Living Area}_i
++ 0.00022 \times\text{Total Basement Area}_i \\
+&- 0.00535 \times\text{House Age}_i
++ 0.00002 \times\text{House Age}_i^2 \\
+&+ 0.16907 \times\text{Quality Average}_i
++ 0.28792 \times\text{Quality Good}_i \\
+&+ 0.08325 \times\text{One Fireplace}_i
++ 0.14625\times\text{Two or More Fireplaces}_i
+\end{aligned}
+}
+$$
+
+For the categorical predictors, the reference categories are houses with bad quality and houses with no fireplaces.
+
+```{r}
+library(broom)
+library(dplyr)
+library(gridExtra)
+library(grid)
+library(gtable)
+
+coef_table <- tidy(
+  model3,
+  conf.int = TRUE,
+  conf.level = 0.95
+) %>%
+  dplyr::select(
+    term,
+    estimate,
+    std.error,
+    conf.low,
+    conf.high,
+    p.value
+  ) %>%
+  mutate(
+    term = c(
+      "Intercept",
+      "Above-ground living area",
+      "Total basement area",
+      "House age",
+      "House age squared",
+      "Quality: Average vs Bad",
+      "Quality: Good vs Bad",
+      "Fireplace: 1 vs 0",
+      "Fireplace: 2+ vs 0"
+    ),
+    estimate = round(estimate, 6),
+    std.error = round(std.error, 6),
+    conf.low = round(conf.low, 6),
+    conf.high = round(conf.high, 6),
+    p.value = ifelse(p.value < 0.001, "<0.001", round(p.value, 3))
+  ) %>%
+  rename(
+    Term = term,
+    Estimate = estimate,
+    `Std. Error` = std.error,
+    `95% CI Lower` = conf.low,
+    `95% CI Upper` = conf.high,
+    `p value` = p.value
+  )
+
+ttheme <- ttheme_minimal(
+  core = list(
+    fg_params = list(cex = 0.9),
+    bg_params = list(fill = "white",
+                     col = "#C8CDD5")
+  ),
+  colhead = list(
+    fg_params = list(col = "white",
+                     fontface = "bold",
+                     cex = 0.9),
+    bg_params = list(fill = "#3F5F8A",
+                     col = "#3F5F8A")
+  )
+)
+
+tbl <- tableGrob(
+  coef_table,
+  rows = NULL,
+  theme = ttheme
+)
+
+caption <- textGrob(
+  "Table 2.7 Final Model Coefficients",
+  gp = gpar(fontface = "bold", fontsize = 12),
+  hjust = 0.5,
+  x = 0.5
+)
+
+# Add one small row above the table for caption
+tbl_with_caption <- gtable_add_rows(
+  tbl,
+  heights = grobHeight(caption) + unit(4, "mm"),
+  pos = 0
+)
+
+# Put caption in that row, spanning the full table width
+tbl_with_caption <- gtable_add_grob(
+  tbl_with_caption,
+  caption,
+  t = 1,
+  l = 1,
+  r = ncol(tbl_with_caption)
+)
+
+grid.newpage()
+grid.draw(tbl_with_caption)
+```
+
+## Interpretation of Coefficients
+
+### Intercept
+
+The intercept estimate was 11.254776. It represents the expected log-transformed sale price for a house with 0 square feet of above-ground living area, 0 square feet of basement area, a house age of 0 years, bad quality, and no fireplaces. Because such a house is not realistic and does not occur in the dataset, the intercept has limited practical interpretation. Its primary role is to establish the baseline level of the regression model
+
+### Above-Ground Living Area
+
+The coefficient for above-ground living area was 0.000303. Holding all other variables constant, an increase of one square foot in above-ground living area will increase the log-transformed sale price by approximately 0.000303 on average. Although the coefficient per square foot is relatively small, meaningful differences in living area correspond to substantial differences in expected sale price. Hence, it indicates that housing size might be an important determinant of house value and contributes to explaining variation in selling prices.
+
+### **Total Basement Area**
+
+The coefficient for total basement area was 0.000219. Holding all other variables constant, an additional square foot of basement area will increase the log-transformed sale price by approximately 0.000219 on average. Similar to the above-ground living area, larger basement spaces contribute positively to housing value and help explain variation in sale prices.
+
+### House Age
+
+The coefficient for house age was -0.005347. Holding all other variables constant, one year increase in house age will decrease the log-transformed sale price by approximately 0.005347 on average. This suggests that newer houses generally sell for higher prices than older houses.
+
+### Squared - House Age
+
+The coefficient for house age squared was 0.000018. Holding all other variables constant, one unit increase in the squared house age will increase the log-transformed sale price by approximately 0.000018 on average.Together with the negative linear age coefficient, this result suggests a nonlinear relationship between house age and sale price. Including both terms allows the model to better capture the true underlying relationship in the dataset.
+
+### **Average Quality**
+
+Compared with houses classified as having bad quality, houses classified as having average quality had a coefficient of 0.169067. Holding all other variables constant, average-quality houses are expected to have approximately 0.169067 higher  log-transformed sale price than comparable houses with bad quality on average. This result indicates that housing quality has a substantial impact on sale price.
+
+### **Good Quality**
+
+Compared with houses classified as having bad quality, houses classified as having good quality had a coefficient of 0.287922. Holding all other variables constant, good-quality houses are expected to have approximately 0.287922 higher log-transformed sale price than comparable houses with bad quality on average. This large effect suggests that housing quality is one of the most influential predictors in the model.
+
+### One Fireplace
+
+Compared with houses without fireplaces, houses with one fireplace had a coefficient of 0.083246. Holding all other variables constant, houses with one fireplace are expected to have approximately 0.083246 higher log-transformed sale price than comparable houses without fireplaces on average.
+
+### **Two or More Fireplaces**
+
+Compared with houses without fireplaces, houses with two or more fireplaces had a coefficient of 0.146254. Holding all other variables constant, houses with two or more fireplaces are expected to have approximately 0.146254 higher log-transformed sale price than comparable houses without fireplaces. The larger coefficient compared with one fireplace suggests an additional increase in housing value associated with having multiple fireplaces.
+
+### **Implications for the Research Question**
+
+The research question for this study was: \vspace{1em}
+
+***To what extent do above-ground living areas, total basement areas, overall quality, number of fireplaces and full bathrooms explain variations in house selling price under normal sale circumstances?*** \vspace{1em}
+
+The results indicate that variables related to housing size, age, quality, and amenities were all statistically significant predictors of sale price. Larger homes, larger basement areas, lower house age, higher-quality construction, and additional fireplaces were associated with higher sale prices. These findings provide strong evidence that structural housing characteristics play an important role in determining selling prices.
+
+## Comparison with Previous Literature
+
+Cebula (2009) found that structural characteristics and amenities, including living space, number of fireplaces, and number of bathrooms, were positively associated with housing values. Similarly, our analysis found that above-ground living area, total basement area, and the number of fireplaces were all significant positive predictors of sale price. Larger homes and homes with more fireplaces tended to command higher prices, supporting Cebula's conclusion.
+
+The findings are also broadly consistent with Zietz, Zietz, and Sirmans (2008), who examined factors affecting housing prices using quantile regression. Their study found that housing characteristics such as square footage, house age, and number of bathrooms significantly influenced housing values. Although our analysis used multiple linear regression rather than quantile regression, both studies identified structural housing characteristics as significant predictors of sale price. In particular, house age remained an important predictor in both analyses.
+
+One significant difference between our findings and those reported in the literature is that full bathrooms were not included in our final model. Although previous studies found bathrooms to be important predictors of housing prices, model selection suggested that other variables provided a stronger explanation of variation in response variable. This difference highlights the possibility that the importance of specific housing characteristics may vary across housing markets and datasets.
+
+Overall, the findings of this study are largely consistent with the existing literature. Both the reviewed studies and our final model indicate that housing size, quality, age, and amenities are important factors associated with housing prices.
+
+## Model performance
+
+### Validation
+
+\vspace{1em}
+
+```{r}
+# Predict test-set log sale prices using model3 fitted on training data
+model3_test_pred <- predict(model3, newdata = clean_ames_test)
+
+# Create test results
+model3_test_results <- clean_ames_test %>%
+  mutate(
+    predicted_log_sale_price = model3_test_pred,
+    test_residual = log_sale_price - predicted_log_sale_price
+  )
+
+# Test-set performance metrics
+model3_test_rmse <- sqrt(mean(model3_test_results$test_residual^2))
+model3_test_mae <- mean(abs(model3_test_results$test_residual))
+
+model3_test_r2 <- 1 -
+  sum(model3_test_results$test_residual^2) /
+  sum((model3_test_results$log_sale_price - mean(model3_test_results$log_sale_price))^2)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=5.5, fig.height=1.6, out.width="70%"}
+validation_results <- tibble(
+  Metric = c(
+    "Test RMSE",
+    "Test MAE",
+    "Test R-squared"
+  ),
+  Value = c(
+    model3_test_rmse,
+    model3_test_mae,
+    model3_test_r2
+  )
+) %>%
+  mutate(Value = sprintf("%.4f", Value))
+
+validation_theme <- ttheme_default(
+  core = list(
+    fg_params = list(fontsize = 10),
+    bg_params = list(
+      fill = c("#F7F9FC", "white"),
+      col = "#C7CED8",
+      lwd = 0.8
+    ),
+    padding = unit(c(3, 3), "mm")
+  ),
+  colhead = list(
+    fg_params = list(
+      fontsize = 10,
+      fontface = "bold",
+      col = "white"
+    ),
+    bg_params = list(
+      fill = "#3F5F8A",
+      col = "#3F5F8A",
+      lwd = 0.8
+    ),
+    padding = unit(c(3, 3), "mm")
+  )
+)
+
+validation_table_body <- tableGrob(
+  validation_results,
+  rows = NULL,
+  theme = validation_theme
+)
+
+validation_title <- textGrob(
+  "Table 2.6 Test Set Validation Results for Model 3",
+  gp = gpar(fontface = "bold", fontsize = 10)
+)
+
+validation_table_final <- arrangeGrob(
+  validation_title,
+  validation_table_body,
+  ncol = 1,
+  heights = unit.c(
+    unit(0.35, "in"),
+    sum(validation_table_body$heights)
+  )
+)
+
+grid.arrange(validation_table_final)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4.8, out.width="95%"}
+library(patchwork)
+
+p1 <- ggplot(model3_test_results, aes(x = predicted_log_sale_price, y = log_sale_price)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  theme_minimal() +
+  labs(
+    x = "Predicted log sale price",
+    y = "Observed log sale price",
+    title = "Observed vs Predicted"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 11)
+  )
+
+p2 <- ggplot(model3_test_results, aes(x = predicted_log_sale_price, y = test_residual)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_smooth(method = "loess", se = FALSE) +
+  theme_minimal() +
+  labs(
+    x = "Predicted log sale price",
+    y = "Test residual",
+    title = "Test Residuals"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 11)
+  )
+
+p1 + p2 +
+  plot_annotation(
+    caption = "Figure 2.9 Model 3 Test Set Prediction and Residual Plots",
+    theme = theme(
+      plot.caption = element_text(
+        hjust = 0.5,
+        face = "bold",
+        size = 10,
+        margin = margin(t = 8)
+      )
+    )
+  )
+```
+
+To evaluate whether the final model generalizes to unseen data, we used fitted model 3 to predict log sale price for the 20% test dataset. As shown in Table 2.6, the test $\color{black}{R^2}$ is 0.8106, which is reasonably high, so the final model maintains good performance in explaining unseen data. The test RMSE and MAE is relatively low, so the average prediction error for model 3 on unseen data is small. The prediction and residual plots also show that the test residuals are generally centered around zero, suggesting that model 3 has good performance and is not overly fitted for the training data.
+
+### Performance
+
+The final model achieved an R-squared value of 0.8719. This indicates that approximately 87.2% of the variation in the response variable can be explained by the fitted model. This high value suggests that housing characteristics provide a strong explanation of variation in house selling prices and supports the conclusion that the final model effectively addresses the research question. The adjusted R-squared value of 0.8715 indicates that approximately 87.15% of the variability in log-transformed sale price**s** can be explained by the predictors included in the final model, after accounting for the number of predictors in the model.
+
+The model also achieved an AIC value of -2644.79 and a BIC value of -2587.79, which were both relatively low. Compared with the competing models considered during model selection, these values indicate a better balance between model fit and model complexity.
+
+Taken together, the high explanatory power, statistically significant predictors, and favorable information criteria indicate that Model 3 provides an interpretable model for explaining housing prices in the Ames Housing dataset.
+
+# Discussion and conclusion
+
+## Main conclusion
+
+This study aimed to identify the key housing characteristics associated with sale prices in Ames, Iowa, and to develop an appropriate predictive model. Model 3 is selected as our final model. The final model included an above-ground living area, total basement area, house age, a quadratic term for house age, overall quality category, and fireplace category. The final model explained approximately 87.2% of the variation in log-transformed sale prices (adjusted R-squared = 0.8715).Diagnostic plots indicated that the assumptions of linearity, constant variance, and normality were satisfied. In addition, validation on the test dataset showed good predictive performance with a test R-squared of 0.8106. It means that the model generalizes well to unseen observations.
+
+## Key findings
+
+Several important findings emerged from the final model. Firstly, the above-ground living area and total basement area were both positively associated with housing prices. Increases in above-ground living area and total basement area raise the mean log sale price by 0.000303 and 0.000219, respectively, assuming other factors are constant. This indicates that larger houses generally sell for higher prices. It is supported by Cebula’s hedonic pricing study. The real sales price was positively affected by the square feet of finished living space.
+
+Secondly, overall housing quality was one of the strongest predictors of sale price. Compared with bad-quality houses, average-quality and good-quality houses have higher mean log sale prices by 0.169067 and 0.287922, respectively, holding other factors constant. This indicates that better quality is associated with a higher price. This is consistent with the hedonic pricing idea that a house is a bundle of characteristics. Each characteristic contributes to its market value.
+
+Thirdly, the fireplace category was also associated with higher housing prices. Compared with houses with no fireplace, houses with one fireplace and two or more fireplaces have higher mean log sale prices by 0.083246 and 0.146254, respectively, holding other factors constant. This suggests that fireplaces can be one of the features that add value to a property. This result is supported by Cebula’s study, which also found that the number of fireplaces had a positive effect on real sales price.
+
+Finally, the relationship between house age and sale price was nonlinear. House age decreases the mean log sale price by 0.005347, while house age squared has a small positive effect of 0.000018, holding other factors constant. This means that older houses generally tend to sell for lower prices. The effect is not completely linear. This finding is also consistent with Zietz et al., who show that age can affect house prices differently across different price levels.
+
+## Practical implications
+
+The findings of this study have several practical implications for homeowners and buyers.The results suggest that above-ground living area, basement area, house age, overallhousing quality, and fireplace availability are important factors associated with housing prices. As a result, homeowners who want to increase the value of their properties may benefit from making improvements that add usable living space or improve the overall quality and condition of the home.
+
+For buyers, the model identifies the housing characteristics that are most strongly related to sale price. Understanding how these features affect property values can help buyers decide whether a home's asking price is reasonable when compared with similar housing. In particular, housing quality and living space appear to have strong effects on market value and should be considered carefully when buying a home.
+
+The final model may also be useful for property assessors as a tool for estimating housing prices. Since the model explains a large proportion of the variation in sale prices and performs well on the test dataset, it provides a useful method for analyzing housing market patterns in Ames, Iowa. Overall, the results contribute to the research question by identifying key housing characteristics that are associated with higher sale prices and by providing a reliable method for predicting housing prices.
+
+## Limitations and Future improvements
+
+This analysis has several limitations. Firstly, the model is based on the Ames housing dataset from 2006 to 2010. Therefore, the results can not apply to other cities or countries. Secondly, although the model explains a large proportion of the variation in log-transformed sale price, the analysis did not explicitly account for spatial dependence. Housing prices are often influenced by nearby properties, neighborhood characteristics, school quality, and local amenities. Although some housing characteristics were included, the model may not fully capture location-based effects. Also, outliers and other special observations were removed during the analysis. It may affect the model results because some unusual but valid houses are no longer included in the final model. Additionally, since the response variable is the log-transformed sale price, the coefficients are less direct to interpret in actual dollar amounts. So the model should be used to understand general relationships rather than to make perfect price predictions. Finally, some underlying relationship in the dataset may still be ignored. A quadratic term was added for house age, other nonlinear relationships may still exist and were not explored. Additionally, potential interaction effects between housing characteristics were not included in the final model. For example, Zietz, Zietz, and Sirmans (2008) suggested that buyers of higher-priced homes value characteristics such as square footage and bathrooms differently from buyers of lower-priced homes. . Ignoring such interactions may oversimplify the relationships among predictor variables. Our analysis could investigate additional nonlinear terms and interaction effects to better capture complex relationships in housing prices.
+
+Another limitation is the potential presence of multicollinearity among the predictors. Housing characteristics such as living area, basement area, and housing quality may be correlated because larger homes often have higher quality features and more amenities. Although multicollinearity does not necessarily reduce model performance, it can make coefficient estimates less stable and reduce model simplicity. Future studies could further investigate the relationships among predictors using additional diagnostic measures or dimension-reduction techniques such as principal component analysis (PCA).
+
+Future improvements could make the analysis more reliable and useful. First, future studies could include more location-related variables. Cebula’s study notes that housing prices are affected by spatial factors such as parks, cul-de-sacs, lakes, apartment complexes, and busy streets. Cebula also states that “spatial control variables are included in the model,” which suggests that location should be considered when explaining house prices. Future studies could also incorporate geographic modeling techniques to better account for these influences. Second, future analysis could use more flexible models instead of relying only on ordinary least squares linear regression. Zietz, Zietz, and Sirmans (2008) reported that “housing characteristics are not valued the same” across the distribution of house prices. Hence, quantile regression or other non-linear models can be introduced in future studies. Finally, the current analysis focused primarily on inference and interpretation rather than predictive performance. In future studies, it is reasonable to analyze predictive accuracy and introduce cross-validation procedures such as LOOCV and K-fold CV, which are practical to assess how well the model generalizes to unseen observations. The analysis could also compare multiple modeling approaches, such as LASSO regression, ridge regression, or decision trees, to evaluate whether more flexible models improve predictive accuracy.
+
+# Author Contributions
+
+-   **Yizhou Qian:** I search for two literature that are related to research question, write the introduction section of the proposal, and do model selection section combine everyone's work together in rmd file.
+
+-   **Yichen Wang:** Conducted data cleaning and preprocessing, and contributed to writing the Data Description section of the proposal. Also assisted with model interpretation and contributed to the Discussion and Conclusion section of the final report.
+
+-   **Lei zhu:** Conducted data cleaning and preprocessing, and contributed to writing the Data Description section of the proposal and Conclusion section of the final report.
+
+-   **ZhaoTong Pan:** I worked on the preliminary regression analysis, including fitting the linear regression model, conducting residual analysis, interpreting model coefficients, and writing the Preliminary Results section. I also conducted final model inference and results (section 5) in the final report, and suggested limitations & future studies of our analysis.
+
+\clearpage
+
+# Bibliography
+
+```{=tex}
+\begingroup
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+```
+\noindent Case, K. E., Quigley, J. M., & Shiller, R. J. (2005). Comparing wealth effects: The stock market versus the housing market. *Advances in Macroeconomics, 5*(1). <https://doi.org/10.2202/1534-6013.1235>
+
+\noindent Cebula, R. J. (2009). The hedonic pricing model applied to the housing market of the city of Savannah and its Savannah Historic Landmark District. *The Review of Regional Studies, 39*(1), 9–22. <https://doi.org/10.52324/001c.8197>
+
+\noindent Zietz, J., Zietz, E. N., & Sirmans, G. S. (2008). Determinants of house prices: A quantile regression approach. *The Journal of Real Estate Finance and Economics, 37*(4), 317–333. <https://doi.org/10.1007/s11146-007-9053-7>
+
+\noindent De Cock, D. (2011). Ames, Iowa: Alternative to the Boston housing data as an end of semester regression project. *Journal of Statistics Education, 19*(3). <https://doi.org/10.1080/10691898.2011.11889627>
+
+```{=tex}
+\endgroup
+```
